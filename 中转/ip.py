@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 中转/ip.py
-从 https://zip.cm.edu.kg/all.txt 拉取数据，筛选包含 #SG/#HK/#JP/#TW/#KR 的行并去重，
+_从 https://zip.cm.edu.kg/all.txt 拉取数据，筛选包含 #SG/#HK/#JP/#TW/#KR 的行并去重，
 并发检测 IP 可达性（先 ping，ping 失败则尝试 TCP 80/443），按每国上限保存结果。
 输出文件：与脚本同目录下的 中转ip.txt（脚本不会自动创建目录）。
 """
