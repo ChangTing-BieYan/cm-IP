@@ -1,50 +1,84 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-调试版 ip2.py
-- 抓取 IP 列表
-- 批量查询国家（Chinaz siteip）
-- 并发检测可达性（ping/TCP 80/443）
-- 打印调试信息，保存最终可达 IP 到 ip.txt
+离线版 ip2.py（自动下载 DB-IP CSV）
+- 下载 DB-IP 免费 CSV（IP -> 国家）
+- 提取源 IP 列表
+- 离线匹配国家
+- 并发检测可达性（ping / TCP 80/443）
+- 输出可达 IP 到 ip.txt
 """
-import requests, re, sys, time, platform, subprocess, socket
+import requests, gzip, shutil, csv, socket, subprocess, platform, sys, time
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from bs4 import BeautifulSoup
 
-URL = "https://raw.githubusercontent.com/tianshipapa/cfipcaiji/refs/heads/main/ip.txt"
+# ---------------- 配置 ----------------
+SRC_URL = "https://raw.githubusercontent.com/tianshipapa/cfipcaiji/refs/heads/main/ip.txt"
+IP_CSV = Path(__file__).parent / "dbip-country-lite.csv"
+CSV_URL = "https://download.db-ip.com/free/dbip-country-lite-2025-11.csv.gz"
 OUT_FILE = Path(__file__).parent / "ip.txt"
-RE_IPV4 = re.compile(r'(\d{1,3}(?:\.\d{1,3}){3})')
+
 PING_TIMEOUT = 2.0
 TCP_TIMEOUT = 1.0
 MAX_WORKERS = 8
-CHINAZ_SITEIP_URL = "https://ip.tool.chinaz.com/siteip"
 
 # 想要保留的国家
 COUNTRIES = ["sg","hk","jp","tw","kr","us","cn"]
 
-# ---------------- 工具函数 ----------------
-
-def fetch_text() -> str:
+# ---------------- 下载 DB-IP CSV ----------------
+def download_dbip_csv():
+    if IP_CSV.exists():
+        print(f"{IP_CSV} 已存在，跳过下载。")
+        return
+    print(f"下载 {CSV_URL} ...")
     try:
-        r = requests.get(URL, headers={"User-Agent":"Mozilla/5.0"}, timeout=30)
+        r = requests.get(CSV_URL, stream=True, timeout=30)
         r.raise_for_status()
-        return r.text
+        gz_path = IP_CSV.with_suffix(".csv.gz")
+        with open(gz_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        # 解压
+        with gzip.open(gz_path, "rb") as f_in, open(IP_CSV, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
+        gz_path.unlink()
+        print("下载并解压完成。")
     except Exception as e:
-        print("Fetch failed:", e)
+        print("下载失败:", e)
         sys.exit(1)
 
-def extract_ipv4(line: str) -> Optional[str]:
-    m = RE_IPV4.search(line)
-    if not m:
-        return None
-    ip = m.group(1)
-    for p in ip.split("."):
-        if not (0 <= int(p) <= 255):
-            return None
-    return ip
+# ---------------- IP 工具 ----------------
+def ip2int(ip: str) -> int:
+    parts = [int(p) for p in ip.split(".")]
+    return (parts[0]<<24) + (parts[1]<<16) + (parts[2]<<8) + parts[3]
 
+def load_ip_db(csv_path: Path):
+    db = []
+    with csv_path.open("r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            start_ip, end_ip, country = row
+            start_int = ip2int(start_ip.strip('"'))
+            end_int = ip2int(end_ip.strip('"'))
+            db.append((start_int, end_int, country.lower()))
+    return db
+
+def query_country(ip: str, db) -> str:
+    n = ip2int(ip)
+    for start, end, country in db:
+        if start <= n <= end:
+            return country
+    return ""
+
+def extract_ipv4(line: str) -> str:
+    parts = line.strip().split()
+    for p in parts:
+        segs = p.split(".")
+        if len(segs)==4 and all(s.isdigit() and 0<=int(s)<=255 for s in segs):
+            return p
+    return ""
+
+# ---------------- 可达性 ----------------
 def ping_host(ip: str) -> bool:
     system = platform.system().lower()
     try:
@@ -66,70 +100,53 @@ def tcp_connect(ip: str, ports=(80,443)) -> bool:
 def is_reachable(ip: str) -> bool:
     return ping_host(ip) or tcp_connect(ip)
 
-# ---------------- 查询国家 ----------------
-
-def query_chinaz_siteip(ip_list: List[str], batch_size: int = 100, delay: float = 0.5) -> Dict[str,str]:
-    ip_country: Dict[str,str] = {}
-    for i in range(0, len(ip_list), batch_size):
-        batch = ip_list[i:i+batch_size]
-        print(f"查询批次: {batch}")
-        data = {"ip":"\n".join(batch)}
-        headers = {"User-Agent":"Mozilla/5.0", "Content-Type":"application/x-www-form-urlencoded"}
-        try:
-            r = requests.post(CHINAZ_SITEIP_URL, data=data, headers=headers, timeout=10)
-            r.raise_for_status()
-        except Exception as e:
-            print(f"请求失败: {e}")
-            continue
-        soup = BeautifulSoup(r.text,"html.parser")
-        for tr in soup.select("table tr"):
-            tds = tr.find_all("td")
-            if len(tds) >= 2:
-                ip_text = tds[0].get_text(strip=True)
-                country_text = tds[1].get_text(strip=True).lower()
-                if ip_text in batch:
-                    ip_country[ip_text] = country_text
-        time.sleep(delay)
-    print(f"Chinaz siteip 返回结果: {ip_country}")
-    return ip_country
-
 # ---------------- 主流程 ----------------
-
 def main():
-    text = fetch_text()
+    import requests
+
+    # 1. 下载 DB-IP CSV
+    download_dbip_csv()
+    db = load_ip_db(IP_CSV)
+
+    # 2. 下载源 IP 列表
+    try:
+        r = requests.get(SRC_URL, timeout=30)
+        r.raise_for_status()
+        text = r.text
+    except Exception as e:
+        print("Fetch failed:", e)
+        sys.exit(1)
+
+    # 3. 提取 IP
     ips = []
     line_map = {}
-    for idx, line in enumerate(text.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
+    for line in text.splitlines():
         ip = extract_ipv4(line)
         if ip:
             ips.append(ip)
             line_map[ip] = line
     print(f"抓到的 IP 数量: {len(ips)}")
     if not ips:
-        print("No IP found in the source.")
+        print("No IP found.")
         sys.exit(0)
 
-    ip2country = query_chinaz_siteip(ips)
-    if not ip2country:
-        print("No countries returned from Chinaz siteip.")
-        sys.exit(0)
-
-    # 候选 IP 按国家过滤
-    candidates: List[Tuple[str,str]] = []
-    for ip,country in ip2country.items():
+    # 4. 过滤国家
+    candidates = []
+    for ip in ips:
+        country = query_country(ip, db)
         if any(c in country for c in COUNTRIES):
             candidates.append((ip, line_map[ip]))
     print(f"候选 IP 数量（符合国家条件）: {len(candidates)}")
+    if not candidates:
+        print("No candidates found.")
+        sys.exit(0)
 
-    # 并发检测可达性
-    reachable: List[str] = []
+    # 5. 并发检测可达性
+    reachable = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        future_map = {ex.submit(is_reachable, ip): ip for ip,_ in candidates}
-        for fut in as_completed(future_map):
-            ip = future_map[fut]
+        fut_map = {ex.submit(is_reachable, ip): ip for ip,_ in candidates}
+        for fut in as_completed(fut_map):
+            ip = fut_map[fut]
             try:
                 if fut.result():
                     reachable.append(line_map[ip])
@@ -137,10 +154,10 @@ def main():
                 continue
     print(f"可达 IP 数量: {len(reachable)}")
 
-    # 写入文件
+    # 6. 写入文件
     if reachable:
         OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with OUT_FILE.open("w",encoding="utf-8") as f:
+        with OUT_FILE.open("w", encoding="utf-8") as f:
             for ln in reachable:
                 f.write(ln+"\n")
         print(f"成功写入 {OUT_FILE}")
