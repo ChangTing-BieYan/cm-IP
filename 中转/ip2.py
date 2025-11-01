@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-离线版 ip2.py（自动下载 DB-IP CSV）
+离线版 ip2.py（自动下载 DB-IP CSV + IPv6 过滤）
 - 下载 DB-IP 免费 CSV（IP -> 国家）
 - 提取源 IP 列表
-- 离线匹配国家
+- 离线匹配国家（IPv4）
 - 并发检测可达性（ping / TCP 80/443）
 - 输出可达 IP 到 ip.txt
 """
-import requests, gzip, shutil, csv, socket, subprocess, platform, sys, time
+import requests, gzip, shutil, csv, socket, subprocess, platform, sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -48,6 +48,10 @@ def download_dbip_csv():
         sys.exit(1)
 
 # ---------------- IP 工具 ----------------
+def is_ipv4(ip: str) -> bool:
+    parts = ip.split(".")
+    return len(parts)==4 and all(p.isdigit() and 0<=int(p)<=255 for p in parts)
+
 def ip2int(ip: str) -> int:
     parts = [int(p) for p in ip.split(".")]
     return (parts[0]<<24) + (parts[1]<<16) + (parts[2]<<8) + parts[3]
@@ -58,9 +62,12 @@ def load_ip_db(csv_path: Path):
         reader = csv.reader(f)
         for row in reader:
             start_ip, end_ip, country = row
-            start_int = ip2int(start_ip.strip('"'))
-            end_int = ip2int(end_ip.strip('"'))
-            db.append((start_int, end_int, country.lower()))
+            start_ip = start_ip.strip('"')
+            end_ip = end_ip.strip('"')
+            country = country.lower()
+            if not is_ipv4(start_ip) or not is_ipv4(end_ip):
+                continue  # 跳过 IPv6
+            db.append((ip2int(start_ip), ip2int(end_ip), country))
     return db
 
 def query_country(ip: str, db) -> str:
@@ -73,8 +80,7 @@ def query_country(ip: str, db) -> str:
 def extract_ipv4(line: str) -> str:
     parts = line.strip().split()
     for p in parts:
-        segs = p.split(".")
-        if len(segs)==4 and all(s.isdigit() and 0<=int(s)<=255 for s in segs):
+        if is_ipv4(p):
             return p
     return ""
 
@@ -102,8 +108,6 @@ def is_reachable(ip: str) -> bool:
 
 # ---------------- 主流程 ----------------
 def main():
-    import requests
-
     # 1. 下载 DB-IP CSV
     download_dbip_csv()
     db = load_ip_db(IP_CSV)
