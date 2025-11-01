@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 中转/ip.py
-_从 https://zip.cm.edu.kg/all.txt 拉取数据，筛选包含 #SG/#HK/#JP/#TW/#KR 的行并去重，
+_从 https://zip.cm.edu.kg/all.txt 拉取数据，筛选包含 #SG/#HK/#JP/#TW/#KR/#US 的行并去重，
 并发检测 IP 可达性（先 ping，ping 失败则尝试 TCP 80/443），按每国上限保存结果。
-输出文件：与脚本同目录下的 中转ip.txt（脚本不会自动创建目录）。
+输出文件：与脚本同目录下的 cm中转ip.txt（脚本不会自动创建目录）。
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
@@ -17,16 +17,23 @@ from typing import Optional, Dict, List, Tuple
 
 URL = "https://zip.cm.edu.kg/all.txt"
 BASE_DIR = Path(__file__).parent  # 脚本所在目录（应该是 中转/）
-OUT_FILE = BASE_DIR / "cm亚太ip.txt"
+OUT_FILE = BASE_DIR / "cm中转ip.txt"
 
 # 要支持的国家标签（小写）
-COUNTRIES = ["sg", "hk", "jp", "tw", "kr"]
+COUNTRIES = ["sg", "hk", "jp", "tw", "kr", "us"]
 
-# 每个国家最多保存多少条（你指定的）
-MAX_PER_COUNTRY: Dict[str, int] = {"sg": 30, "hk": 20, "jp": 20, "tw": 10, "kr": 10}
+# 每个国家最多保存多少条
+MAX_PER_COUNTRY: Dict[str, int] = {
+    "sg": 50,
+    "hk": 30,
+    "jp": 20,
+    "tw": 10,
+    "kr": 10,
+    "us": 30,
+}
 
 # 正则匹配标签与 IPv4（支持可选的 /n 后缀）
-PAT_TAG = re.compile(r'#(?:sg|hk|jp|tw|kr)\b', re.IGNORECASE)
+PAT_TAG = re.compile(r'#(?:sg|hk|jp|tw|kr|us)\b', re.IGNORECASE)
 RE_IPV4 = re.compile(r'(\d{1,3}(?:\.\d{1,3}){3})(?:/\d{1,2})?')
 
 # 超时设置（秒）
@@ -107,7 +114,7 @@ def ping_host(ip: str, timeout: float = PING_TIMEOUT) -> bool:
     system = platform.system().lower()
     try:
         if system == "windows":
-            cmd = ["ping", "-n", "1", "-w", str(int(timeout *1000)), ip]
+            cmd = ["ping", "-n", "1", "-w", str(int(timeout * 1000)), ip]
         else:
             cmd = ["ping", "-c", "1", ip]
         res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout + 0.5)
@@ -218,10 +225,10 @@ def run_concurrent_tests(candidates: List[Tuple[int, str, str, str]]) -> Tuple[D
 def write_output(saved: Dict[str, List[Tuple[int, str]]], out_path: Path = OUT_FILE) -> None:
     """
     把保存的行按国家顺序写入文件。
-    注意：按你的要求脚本不会自动创建目录；若目录不存在则报错并退出。
+    注意：脚本不会自动创建目录；若目录不存在则报错并退出。
     """
     if not out_path.parent.exists():
-        print(f"输出目录 {out_path.parent} 不存在。脚本不会自动创建，请先在仓库中创建该目录并提交（或确保 workflow 创建）。")
+        print(f"输出目录 {out_path.parent} 不存在。请先创建目录再运行。")
         sys.exit(2)
 
     lines: List[str] = []
@@ -229,7 +236,7 @@ def write_output(saved: Dict[str, List[Tuple[int, str]]], out_path: Path = OUT_F
         lines.extend([ln for (_, ln) in saved.get(c, [])])
 
     try:
-        with out_path.open("w",encoding="utf-8", newline="\n") as f:
+        with out_path.open("w", encoding="utf-8", newline="\n") as f:
             for ln in lines:
                 f.write(ln + "\n")
     except Exception as e:
