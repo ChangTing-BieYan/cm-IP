@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-离线版 ip2.py（自动下载 DB-IP CSV + IPv6 过滤）
-- 下载 DB-IP 免费 CSV（IP -> 国家）
-- 提取源 IP 列表
-- 离线匹配国家（IPv4）
-- 并发检测可达性（ping / TCP 80/443）
-- 输出可达 IP 到 ip.txt
+ip2.py 完整版本（自动下载 DB-IP CSV + 国家标签输出）
 """
 import requests, gzip, shutil, csv, socket, subprocess, platform, sys
 from pathlib import Path
@@ -22,7 +17,6 @@ PING_TIMEOUT = 2.0
 TCP_TIMEOUT = 1.0
 MAX_WORKERS = 8
 
-# 想要保留的国家
 COUNTRIES = ["sg","hk","jp","tw","kr","us","cn"]
 
 # ---------------- 下载 DB-IP CSV ----------------
@@ -136,10 +130,12 @@ def main():
 
     # 4. 过滤国家
     candidates = []
+    ip_country_map = {}
     for ip in ips:
         country = query_country(ip, db)
+        ip_country_map[ip] = country
         if any(c in country for c in COUNTRIES):
-            candidates.append((ip, line_map[ip]))
+            candidates.append(ip)
     print(f"候选 IP 数量（符合国家条件）: {len(candidates)}")
     if not candidates:
         print("No candidates found.")
@@ -148,12 +144,13 @@ def main():
     # 5. 并发检测可达性
     reachable = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        fut_map = {ex.submit(is_reachable, ip): ip for ip,_ in candidates}
+        fut_map = {ex.submit(is_reachable, ip): ip for ip in candidates}
         for fut in as_completed(fut_map):
             ip = fut_map[fut]
             try:
                 if fut.result():
-                    reachable.append(line_map[ip])
+                    country = ip_country_map.get(ip,"").upper()
+                    reachable.append(f"{line_map[ip]} #{country}")
             except:
                 continue
     print(f"可达 IP 数量: {len(reachable)}")
