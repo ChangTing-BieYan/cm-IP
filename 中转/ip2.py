@@ -8,7 +8,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ---------------- 配置 ----------------
-SRC_URL = "https://raw.githubusercontent.com/tianshipapa/cfipcaiji/refs/heads/main/ip.txt"
+SRC_URL = "https://raw.githubusercontent.com/ChangTing-BieYan/cfipcaiji/refs/heads/main/ip.txt"
 IP_CSV = Path(__file__).parent / "dbip-country-lite.csv"
 CSV_URL = "https://download.db-ip.com/free/dbip-country-lite-2025-11.csv.gz"
 OUT_FILE = Path(__file__).parent / "ip.txt"
