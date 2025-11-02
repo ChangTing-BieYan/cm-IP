@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    - cron: '30 1 * * *'  # 每天 01:30 自动运行
+    - cron: '30 */3 * * *'  # 每天 01:30 自动运行
   workflow_dispatch: 
   push:
     paths:
