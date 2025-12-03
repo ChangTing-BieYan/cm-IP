@@ -25,7 +25,7 @@ MAX_PER_COUNTRY: Dict[str, int] = {
     "jp": 20,
     "tw": 10,
     "kr": 10,
-    "us": 30,
+    "us": 3,
 }
 
 # 正则匹配标签与 IPv4
